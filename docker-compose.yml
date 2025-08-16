@@ -1,0 +1,134 @@
+version: "3.9"
+name: local-llm-vllm-rtx3080
+
+services:
+  # =======================
+  # vLLM - Chat
+  # =======================
+  vllm-chat:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    command:
+      # Model comes from your .env; falls back to gpt-oss-20b if unset
+      - "--model=${VLLM_CHAT_MODEL}"
+      - "--dtype=${VLLM_CHAT_DTYPE}"  
+      - "--gpu-memory-utilization=${VLLM_CHAT_GPU_UTIL:-0.85}"
+      - "--port=8000"
+      - "--max-model-len=4096" 
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+              
+    networks:
+      - ai-net
+
+  # =======================
+  # vLLM - Embeddings (nomic-embed-text v1.5)
+  # =======================
+  vllm-embed:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    command:
+      - "--model=${VLLM_EMBED_MODEL:-nomic-ai/nomic-embed-text-v1}"
+      - "--task=embed" 
+      - "--dtype=${VLLM_EMBED_DTYPE:-auto}"
+      - "--gpu-memory-utilization=${VLLM_EMBED_GPU_UTILIZATION:-0.5}"
+      - "--port=8001"
+      - "--trust-remote-code"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+    networks:
+      - ai-net
+
+  # =======================
+  # OpenWebUI (LAN access)
+  # =======================
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+      - vllm-chat
+      - vllm-embed
+    environment:
+      - OPENAI_API_BASE_URL=http://vllm-chat:8000/v1
+      - OPENAI_API_KEY=local-key
+      - VECTOR_DB=qdrant
+      - QDRANT_URI=${QDRANT_URI:-http://qdrant:6333}
+      - WEBUI_NAME=${WEBUI_NAME:-Local LLM (vLLM on 3080)}
+    volumes:
+      - openwebui_data:/app/backend/data
+      - openwebui_cache:/root/.cache
+    ports:
+      - "0.0.0.0:3000:8080"   # reachable from host + LAN
+    networks:
+      - ai-net
+
+  # =======================
+  # Qdrant (Vector DB)
+  # =======================
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    # minimal addition to avoid boot race; safe to remove if undesired
+    healthcheck:
+      # Use whichever HTTP client exists in the image; fail only if neither works or /readyz != 200
+      test: ["CMD-SHELL", "(command -v curl >/dev/null 2>&1 && curl -fsS http://localhost:6333/readyz) || (command -v wget >/dev/null 2>&1 && wget -qO- http://localhost:6333/readyz) || exit 1"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 50
+
+    networks:
+      - ai-net
+
+  # =======================
+  # MinIO (host-only)
+  # =======================
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "127.0.0.1:9000:9000"  # S3 API (host only)
+      - "127.0.0.1:9001:9001"  # Console (host only)
+    networks:
+      - ai-net
+
+networks:
+  ai-net: {}
+
+volumes:
+  openwebui_data:
+  openwebui_cache:
+  qdrant_storage:
+  minio_data:
+  hf_cache:
