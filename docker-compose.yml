@@ -1,4 +1,3 @@
-version: "3.9"
 name: local-llm-vllm-rtx3080
 
 services:
@@ -16,24 +15,16 @@ services:
       # Model comes from your .env; falls back to gpt-oss-20b if unset
       - "--model=${VLLM_CHAT_MODEL}"
       - "--dtype=${VLLM_CHAT_DTYPE}"  
-      - "--gpu-memory-utilization=${VLLM_CHAT_GPU_UTIL:-0.85}"
+      - "--gpu-memory-utilization=${VLLM_CHAT_GPU_UTIL}"
       - "--port=8000"
-      - "--max-model-len=4096" 
+      - "--max-model-len=${VLLM_CHAT_MAX_LEN}"
     volumes:
       - hf_cache:/root/.cache/huggingface
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: ["gpu"]
-              
     networks:
       - ai-net
 
   # =======================
-  # vLLM - Embeddings (nomic-embed-text v1.5)
+  # vLLM - Embeddings
   # =======================
   vllm-embed:
     image: vllm/vllm-openai:latest
@@ -43,21 +34,15 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
     command:
-      - "--model=${VLLM_EMBED_MODEL:-nomic-ai/nomic-embed-text-v1}"
-      - "--task=embed" 
+      - "--model=${VLLM_EMBED_MODEL}"
+      - "--runner=pooling"
+      # - "--task=embed" 
       - "--dtype=${VLLM_EMBED_DTYPE:-auto}"
-      - "--gpu-memory-utilization=${VLLM_EMBED_GPU_UTILIZATION:-0.5}"
+      - "--gpu-memory-utilization=${VLLM_EMBED_GPU_UTILIZATION}"
       - "--port=8001"
       - "--trust-remote-code"
     volumes:
       - hf_cache:/root/.cache/huggingface
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: ["gpu"]
     networks:
       - ai-net
 
@@ -76,7 +61,7 @@ services:
       - OPENAI_API_KEY=local-key
       - VECTOR_DB=qdrant
       - QDRANT_URI=${QDRANT_URI:-http://qdrant:6333}
-      - WEBUI_NAME=${WEBUI_NAME:-Local LLM (vLLM on 3080)}
+      - WEBUI_NAME=${WEBUI_NAME}
     volumes:
       - openwebui_data:/app/backend/data
       - openwebui_cache:/root/.cache
@@ -106,22 +91,22 @@ services:
       - ai-net
 
   # =======================
-  # MinIO (host-only)
+  # MinIO (commented out for now, may use later for storage solution)
   # =======================
-  minio:
-    image: quay.io/minio/minio:latest
-    restart: unless-stopped
-    environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
-    volumes:
-      - minio_data:/data
-    ports:
-      - "127.0.0.1:9000:9000"  # S3 API (host only)
-      - "127.0.0.1:9001:9001"  # Console (host only)
-    networks:
-      - ai-net
+  #minio:
+  #  image: quay.io/minio/minio:latest
+  #  restart: unless-stopped
+  #  environment:
+  #    - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+  #    - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+  #  command: server /data --console-address ":9001"
+  #  volumes:
+  #    - minio_data:/data
+  #  ports:
+  #    - "127.0.0.1:9000:9000"  # S3 API (host only)
+  #    - "127.0.0.1:9001:9001"  # Console (host only)
+  #  networks:
+  #    - ai-net
 
 networks:
   ai-net: {}
@@ -130,5 +115,5 @@ volumes:
   openwebui_data:
   openwebui_cache:
   qdrant_storage:
-  minio_data:
+  # minio_data:
   hf_cache:
